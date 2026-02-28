@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import GeoTIFF from "geotiff";
+import { fromUrl as geotiffFromUrl } from "geotiff";
 import { useI18n } from "./i18n";
 
 // ═══════════════════════════════════════════════════════════════
@@ -181,8 +181,8 @@ async function analyzeDiversityForScene(item) {
 
   // Read COG overviews (smallest available) for fast transfer
   const [redTiff, nirTiff] = await Promise.all([
-    GeoTIFF.fromUrl(redUrl),
-    GeoTIFF.fromUrl(nirUrl),
+    geotiffFromUrl(redUrl),
+    geotiffFromUrl(nirUrl),
   ]);
   const imageCount = await redTiff.getImageCount();
   // Use the last overview (smallest resolution, ~686px) for speed
