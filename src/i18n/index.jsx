@@ -7,12 +7,12 @@ const I18nContext = createContext();
 
 export function I18nProvider({ children }) {
   const [lang, setLangState] = useState(
-    () => localStorage.getItem("skogkontroll-lang") || "no"
+    () => localStorage.getItem("wunderbaum-lang") || "no"
   );
 
   const setLang = useCallback((l) => {
     setLangState(l);
-    localStorage.setItem("skogkontroll-lang", l);
+    localStorage.setItem("wunderbaum-lang", l);
     document.documentElement.lang = l;
   }, []);
 

@@ -1,6 +1,6 @@
 export default {
   // ── App chrome ──
-  "app.title": "Skogkontroll",
+  "app.title": "Wunderbaum",
   "app.simple": "Simple",
   "app.advanced": "Advanced",
 
