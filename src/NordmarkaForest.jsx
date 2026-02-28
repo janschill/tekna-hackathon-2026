@@ -100,28 +100,21 @@ function ndviToLAI(ndvi) {
 // (Nature Plants, 2024, DOI: 10.1038/s41477-024-01794-w)
 // Simplified implementation using CV(NDVI), Rao's Q, and Shannon H' from Sentinel-2 COGs.
 
-function computeNDVIArray(redRaster, nirRaster, width, height, geoTransform, bbox) {
-  const [originX, pixelWidth, , originY, , pixelHeight] = geoTransform;
+function computeNDVIArray(redRaster, nirRaster, width, height) {
+  // Process all pixels from the overview image (STAC search already filtered scenes by bbox)
   const ndviValues = [];
-  for (let row = 0; row < height; row++) {
-    const lat = originY + row * pixelHeight;
-    if (lat < bbox[1] || lat > bbox[3]) continue;
-    for (let col = 0; col < width; col++) {
-      const lon = originX + col * pixelWidth;
-      if (lon < bbox[0] || lon > bbox[2]) continue;
-      const idx = row * width + col;
-      const rawRed = redRaster[idx];
-      const rawNir = nirRaster[idx];
-      if (rawRed === 0 || rawNir === 0) continue;
-      // Sentinel-2 L2A COG: scale=0.0001, offset=-0.1
-      const red = rawRed * 0.0001 - 0.1;
-      const nir = rawNir * 0.0001 - 0.1;
-      if (red < 0 || nir < 0 || red > 1 || nir > 1) continue;
-      const sum = nir + red;
-      if (sum === 0) continue;
-      const ndvi = (nir - red) / sum;
-      if (ndvi >= -0.2 && ndvi <= 1.0) ndviValues.push(ndvi);
-    }
+  for (let i = 0; i < width * height; i++) {
+    const rawRed = redRaster[i];
+    const rawNir = nirRaster[i];
+    if (rawRed === 0 || rawNir === 0) continue;
+    // Sentinel-2 L2A COG: scale=0.0001, offset=-0.1
+    const red = rawRed * 0.0001 - 0.1;
+    const nir = rawNir * 0.0001 - 0.1;
+    if (red < 0 || nir < 0 || red > 1 || nir > 1) continue;
+    const sum = nir + red;
+    if (sum === 0) continue;
+    const ndvi = (nir - red) / sum;
+    if (ndvi >= -0.2 && ndvi <= 1.0) ndviValues.push(ndvi);
   }
   return ndviValues;
 }
@@ -196,16 +189,7 @@ async function analyzeDiversityForScene(item) {
   const [redData] = await redImage.readRasters();
   const [nirData] = await nirImage.readRasters();
 
-  // Build geo transform from tiepoints and pixel scale
-  const tiepoint = redImage.getTiePoints()?.[0];
-  const pixelScale = redImage.fileDirectory?.ModelPixelScale;
-  if (!tiepoint || !pixelScale) throw new Error("Missing geo metadata");
-  const geoTransform = [
-    tiepoint.x, pixelScale[0], 0,
-    tiepoint.y, 0, -pixelScale[1],
-  ];
-
-  const ndviArray = computeNDVIArray(redData, nirData, width, height, geoTransform, NORDMARKA.bbox);
+  const ndviArray = computeNDVIArray(redData, nirData, width, height);
   if (ndviArray.length < 10) throw new Error(`Too few valid pixels: ${ndviArray.length}`);
 
   const mean = ndviArray.reduce((s, v) => s + v, 0) / ndviArray.length;
