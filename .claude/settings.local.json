@@ -4,7 +4,8 @@
       "Bash(curl:*)",
       "WebFetch(domain:www.nature.com)",
       "WebSearch",
-      "WebFetch(domain:pubmed.ncbi.nlm.nih.gov)"
+      "WebFetch(domain:pubmed.ncbi.nlm.nih.gov)",
+      "WebFetch(domain:api.inaturalist.org)"
     ]
   }
 }

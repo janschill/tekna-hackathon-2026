@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import GeoTIFF from "geotiff";
+import { useI18n } from "./i18n";
 
 // ═══════════════════════════════════════════════════════════════
 // NORDMARKA FOREST — REAL DATA DASHBOARD
@@ -30,6 +31,7 @@ const MET_API = import.meta.env.DEV
 // Open-Meteo APIs (ERA5 reanalysis + CMIP6 projections — no auth required)
 const OPENMETEO_HISTORICAL = "https://archive-api.open-meteo.com/v1/archive";
 const OPENMETEO_CLIMATE = "https://climate-api.open-meteo.com/v1/climate";
+const INATURALIST_API = "https://api.inaturalist.org/v1";
 
 // ── Utility: fetch with timeout ──
 async function fetchWithTimeout(url, options = {}, timeout = 12000) {
@@ -334,6 +336,37 @@ async function fetchClimateProjections() {
   return { dates, temps };
 }
 
+// ── iNaturalist Species Data ──
+async function fetchSpecies() {
+  const radius = Math.sqrt(NORDMARKA.area_km2 / Math.PI);
+  const radiusKm = Math.round(radius);
+  const [lat, lng] = NORDMARKA.center;
+
+  const fetchCategory = async (params) => {
+    const url = `${INATURALIST_API}/observations/species_counts?lat=${lat}&lng=${lng}&radius=${radiusKm}&quality_grade=research&per_page=50&${params}`;
+    const res = await fetchWithTimeout(url, {}, 15000);
+    if (!res.ok) throw new Error(`iNaturalist ${res.status}`);
+    const data = await res.json();
+    return (data.results || []).map(r => ({
+      taxonId: r.taxon?.id,
+      scientificName: r.taxon?.name,
+      commonName: r.taxon?.preferred_common_name || r.taxon?.english_common_name,
+      rank: r.taxon?.rank,
+      obsCount: r.count,
+      iconicTaxon: r.taxon?.iconic_taxon_name,
+      photoUrl: r.taxon?.default_photo?.medium_url,
+      photoAttribution: r.taxon?.default_photo?.attribution,
+      conservationStatus: r.taxon?.conservation_status,
+    }));
+  };
+
+  const [threatened, introduced] = await Promise.all([
+    fetchCategory("threatened=true"),
+    fetchCategory("introduced=true"),
+  ]);
+  return { threatened, introduced };
+}
+
 // ── NIBIO WMS tile URL builder ──
 function nibioWMSTile(layer, bbox, width = 512, height = 512) {
   const params = new URLSearchParams({
@@ -403,42 +436,42 @@ const ProgressBar = ({ value, max = 100, color = "var(--green)", label, showVal 
 // ═══ Interpretation Functions (Simple Mode) ═══
 
 function interpretNDVI(ndvi) {
-  if (ndvi == null) return { level: 0, label: "Ingen data", color: "#adb5bd", description: "Venter på satellittdata" };
-  if (ndvi >= 0.7) return { level: 3, label: "Frodig og sunn skog", color: "#2d6a4f", description: "Skogen er i svært god stand med tett, grønt bladtak." };
-  if (ndvi >= 0.5) return { level: 2, label: "Normal skoghelse", color: "#52b788", description: "Skogen ser frisk ut med god vegetasjon." };
-  if (ndvi >= 0.3) return { level: 1, label: "Noe glissent", color: "#e9c46a", description: "Noe lavere tetthet enn normalt — kan skyldes årstid eller hogst." };
-  return { level: 0, label: "Lite vegetasjon", color: "#e07a5f", description: "Området har lite grønn vegetasjon — mulig hogstfelt eller snødekke." };
+  if (ndvi == null) return { level: 0, label: "ndvi.noData.label", color: "#adb5bd", description: "ndvi.noData.desc" };
+  if (ndvi >= 0.7) return { level: 3, label: "ndvi.lush.label", color: "#2d6a4f", description: "ndvi.lush.desc" };
+  if (ndvi >= 0.5) return { level: 2, label: "ndvi.normal.label", color: "#52b788", description: "ndvi.normal.desc" };
+  if (ndvi >= 0.3) return { level: 1, label: "ndvi.sparse.label", color: "#e9c46a", description: "ndvi.sparse.desc" };
+  return { level: 0, label: "ndvi.low.label", color: "#e07a5f", description: "ndvi.low.desc" };
 }
 
 function interpretLAI(lai) {
-  if (lai == null) return { label: "Ingen data", description: "Venter på satellittdata" };
-  if (lai >= 4.0) return { label: "Tett kronetak", description: "God skygge og jordbeskyttelse — typisk for eldre granskog." };
-  if (lai >= 2.5) return { label: "Middels tett", description: "Godt bladtak — vanlig for blandingsskog i Nordmarka." };
-  if (lai >= 1.0) return { label: "Åpent", description: "Relativt åpent — ung skog eller lauvskog om vinteren." };
-  return { label: "Svært åpent", description: "Lite kronetak — hogstfelt eller fjell over tregrensa." };
+  if (lai == null) return { label: "lai.noData.label", description: "lai.noData.desc" };
+  if (lai >= 4.0) return { label: "lai.dense.label", description: "lai.dense.desc" };
+  if (lai >= 2.5) return { label: "lai.medium.label", description: "lai.medium.desc" };
+  if (lai >= 1.0) return { label: "lai.open.label", description: "lai.open.desc" };
+  return { label: "lai.veryOpen.label", description: "lai.veryOpen.desc" };
 }
 
 function interpretGrowingConditions(tempVal, growing) {
-  if (tempVal == null) return { status: "unknown", headline: "Venter på værdata" };
-  if (tempVal >= 5 && growing) return { status: "active", headline: "Gode vekstforhold i dag" };
-  if (tempVal >= 5) return { status: "warm", headline: "Varmt nok for vekst" };
-  if (tempVal >= 0) return { status: "cool", headline: "For kaldt for vekst — trærne hviler" };
-  return { status: "frost", headline: "Frost — trærne er i vinterdvale" };
+  if (tempVal == null) return { status: "unknown", headline: "growing.unknown" };
+  if (tempVal >= 5 && growing) return { status: "active", headline: "growing.active" };
+  if (tempVal >= 5) return { status: "warm", headline: "growing.warm" };
+  if (tempVal >= 0) return { status: "cool", headline: "growing.cool" };
+  return { status: "frost", headline: "growing.frost" };
 }
 
 function interpretWeatherRisk(tempVal, wind, humidityVal, precip) {
   const alerts = [];
   if (tempVal != null && tempVal > 25 && humidityVal != null && humidityVal < 30) {
-    alerts.push({ type: "fire", label: "Skogbrannfare", color: "#e07a5f", description: "Høy temperatur og lav luftfuktighet gir brannfare." });
+    alerts.push({ type: "fire", label: "risk.fire.label", color: "#e07a5f", description: "risk.fire.desc" });
   }
   if (wind != null && wind > 15) {
-    alerts.push({ type: "storm", label: "Sterk vind", color: "#457b9d", description: "Vindstyrke " + wind.toFixed(0) + " m/s — fare for vindfall." });
+    alerts.push({ type: "storm", label: "risk.storm.label", color: "#457b9d", description: "risk.storm.desc", descVars: { speed: wind.toFixed(0) } });
   }
   if (tempVal != null && tempVal <= -10) {
-    alerts.push({ type: "frost", label: "Kraftig frost", color: "#a8dadc", description: "Svært kaldt — unngå hogst i frosset treverk." });
+    alerts.push({ type: "frost", label: "risk.frost.label", color: "#a8dadc", description: "risk.frost.desc" });
   }
   if (tempVal != null && tempVal > 0 && tempVal < 3 && precip != null && precip > 0) {
-    alerts.push({ type: "ice", label: "Ising", color: "#b5838d", description: "Nær null med nedbør — glatte forhold i skogen." });
+    alerts.push({ type: "ice", label: "risk.ice.label", color: "#b5838d", description: "risk.ice.desc" });
   }
   return alerts;
 }
@@ -446,32 +479,23 @@ function interpretWeatherRisk(tempVal, wind, humidityVal, precip) {
 function getSeasonalAdvice(month, tempVal) {
   const tips = [];
   if (month >= 11 || month <= 2) {
-    tips.push("Vinterhogst er ideelt — frossen jord gir mindre skade på skogbunnen.");
-    if (tempVal != null && tempVal < -5) tips.push("Vent med å felle store trær i sterk frost — virket kan sprekke.");
-    tips.push("Sjekk for snøbrekk og ta ut skadd virke.");
+    tips.push("season.winter.harvest");
+    if (tempVal != null && tempVal < -5) tips.push("season.winter.frost");
+    tips.push("season.winter.snow");
   } else if (month >= 3 && month <= 5) {
-    tips.push("Vårens teleløsning — unngå kjøring med tungt utstyr.");
-    tips.push("Planting av nye trær kan starte når telen går.");
-    tips.push("Se etter granbarkbiller når temperaturen stiger.");
+    tips.push("season.spring.thaw");
+    tips.push("season.spring.planting");
+    tips.push("season.spring.beetles");
   } else if (month >= 6 && month <= 8) {
-    tips.push("Sommerens vekstsesong — skogen vokser aktivt.");
-    tips.push("Følg med på skogbrannfare i tørre perioder.");
-    tips.push("Markberedning kan gjøres nå for høstens planting.");
+    tips.push("season.summer.growth");
+    tips.push("season.summer.fire");
+    tips.push("season.summer.prep");
   } else {
-    tips.push("Høsten er god for planting av bartrær.");
-    tips.push("Planlegg vinterens hogst — merk trær som skal felles.");
-    tips.push("Kontroller at skogsveier er klare for vinteren.");
+    tips.push("season.autumn.planting");
+    tips.push("season.autumn.planning");
+    tips.push("season.autumn.roads");
   }
   return tips;
-}
-
-function carbonEquivalent(biomassTotal) {
-  const co2Mt = biomassTotal * 0.47 * 3.67;
-  const cars = Math.round((co2Mt * 1e6) / 4.6);
-  if (cars >= 1000) {
-    return "Tilsvarer å fjerne " + (cars / 1000).toFixed(0) + " 000 biler fra veien i ett år";
-  }
-  return "Tilsvarer å fjerne " + cars + " biler fra veien i ett år";
 }
 
 function getLAITrend(history) {
@@ -487,6 +511,7 @@ function getLAITrend(history) {
 // ═══ Main App ═══
 
 export default function NordmarkaForest() {
+  const { lang, setLang, t } = useI18n();
   const [tab, setTab] = useState(() => (localStorage.getItem("skogkontroll-mode") || "simple") === "simple" ? "minskog" : "overview");
   const [stacData, setStacData] = useState({ sentinel: null, landsat: null, loading: true, error: null });
   const [weather, setWeather] = useState({ data: null, loading: true, error: null });
@@ -497,6 +522,9 @@ export default function NordmarkaForest() {
   const [selectedScene, setSelectedScene] = useState(null);
   const [growingSeason, setGrowingSeason] = useState({ historical: null, projected: null, loading: true, error: null });
   const [diversityData, setDiversityData] = useState({ loading: false, error: null, scenes: [], initialized: false });
+  const [speciesData, setSpeciesData] = useState({
+    threatened: [], introduced: [], loading: false, error: null, initialized: false,
+  });
   const [viewMode, setViewMode] = useState(
     () => localStorage.getItem("skogkontroll-mode") || "simple"
   );
@@ -617,6 +645,22 @@ export default function NordmarkaForest() {
     loadDiversity();
   }, [tab, stacData.sentinel, diversityData.initialized]);
 
+  // ── Lazy-load species data when tab is selected ──
+  useEffect(() => {
+    if ((tab !== "arter" && tab !== "species") || speciesData.initialized) return;
+
+    const loadSpecies = async () => {
+      setSpeciesData(s => ({ ...s, loading: true, initialized: true }));
+      try {
+        const { threatened, introduced } = await fetchSpecies();
+        setSpeciesData({ threatened, introduced, loading: false, error: null, initialized: true });
+      } catch (e) {
+        setSpeciesData(s => ({ ...s, loading: false, error: e.message }));
+      }
+    };
+    loadSpecies();
+  }, [tab, speciesData.initialized]);
+
   // ── Derived data ──
   const currentWeather = weather.data?.properties?.timeseries?.[0]?.data;
   const temp = currentWeather?.instant?.details?.air_temperature;
@@ -636,17 +680,19 @@ export default function NordmarkaForest() {
   const biomassUrl = nibioWMSTile("SRRBMO", NORDMARKA.bbox, 600, 500);
 
   const simpleTabs = [
-    { id: "minskog", label: "Min skog", icon: "🌲" },
-    { id: "skogkart", label: "Skogkart", icon: "🗺" },
-    { id: "vaervekst", label: "Vær og vekst", icon: "☀" },
+    { id: "minskog", label: t("tab.minskog"), icon: "🌲" },
+    { id: "skogkart", label: t("tab.skogkart"), icon: "🗺" },
+    { id: "vaervekst", label: t("tab.vaervekst"), icon: "☀" },
+    { id: "arter", label: t("tab.arter"), icon: "🦌" },
   ];
   const advancedTabs = [
-    { id: "overview", label: "Overview", icon: "◉" },
-    { id: "lai", label: "LAI / NDVI", icon: "🌿" },
-    { id: "map", label: "SR16 Map", icon: "🗺" },
-    { id: "scenes", label: "Satellite", icon: "🛰" },
-    { id: "climate", label: "Climate", icon: "🌡" },
-    { id: "diversity", label: "Diversity", icon: "🌳" },
+    { id: "overview", label: t("tab.overview"), icon: "◉" },
+    { id: "lai", label: t("tab.lai"), icon: "🌿" },
+    { id: "map", label: t("tab.map"), icon: "🗺" },
+    { id: "scenes", label: t("tab.scenes"), icon: "🛰" },
+    { id: "climate", label: t("tab.climate"), icon: "🌡" },
+    { id: "diversity", label: t("tab.diversity"), icon: "🌳" },
+    { id: "species", label: t("tab.species"), icon: "🦌" },
   ];
   const tabs = viewMode === "simple" ? simpleTabs : advancedTabs;
 
@@ -658,16 +704,19 @@ export default function NordmarkaForest() {
   const isSimple = viewMode === "simple";
   const laiTrend = getLAITrend(laiHistory);
   const trendArrow = laiTrend === "improving" ? "↗" : laiTrend === "declining" ? "↘" : "→";
-  const trendLabel = laiTrend === "improving" ? "Bedre" : laiTrend === "declining" ? "Svakere" : "Stabil";
+  const trendLabel = laiTrend === "improving" ? t("trend.improving") : laiTrend === "declining" ? t("trend.declining") : t("trend.stable");
   const ndviInterpret = interpretNDVI(latestLAI?.ndvi);
   const laiInterpret = interpretLAI(latestLAI?.lai);
   const growingStatus = interpretGrowingConditions(temp, temp >= 5);
   const weatherRisks = interpretWeatherRisk(temp, windSpeed, humidity, precipitation);
-  const biomassPerHa = latestLAI ? latestLAI.lai * 28.5 : 120;
-  const totalBiomassMt = biomassPerHa * NORDMARKA.area_km2 * 100 / 1e6;
-  const carbonStory = carbonEquivalent(totalBiomassMt);
   const currentMonth = new Date().getMonth() + 1;
   const seasonalTips = getSeasonalAdvice(currentMonth, temp);
+  const avgSeasonLength = growingSeason.historical?.length > 0
+    ? Math.round(growingSeason.historical.reduce((s, y) => s + y.length, 0) / growingSeason.historical.length)
+    : null;
+  const lastSeasonYear = growingSeason.historical?.length > 0
+    ? growingSeason.historical[growingSeason.historical.length - 1]
+    : null;
 
   return (
     <div className={`app${isSimple ? " simple" : ""}`}>
@@ -682,20 +731,24 @@ export default function NordmarkaForest() {
             <rect x="16" y="28" width="4" height="4" rx="1" fill="#1b4332" />
           </svg>
           <div>
-            <div className="header-title">Skogkontroll</div>
+            <div className="header-title">{t("app.title")}</div>
             <div className="header-sub">Nordmarka · {NORDMARKA.municipality}</div>
           </div>
         </div>
         <div className="header-right">
+          <div className="lang-toggle">
+            <button className={`lang-btn${lang === "no" ? " active" : ""}`} onClick={() => setLang("no")}>NO</button>
+            <button className={`lang-btn${lang === "en" ? " active" : ""}`} onClick={() => setLang("en")}>EN</button>
+          </div>
           <div className="mode-toggle">
-            <button className={`mode-btn${isSimple ? " active" : ""}`} onClick={() => handleModeSwitch("simple")}>Enkel</button>
-            <button className={`mode-btn${!isSimple ? " active" : ""}`} onClick={() => handleModeSwitch("advanced")}>Avansert</button>
+            <button className={`mode-btn${isSimple ? " active" : ""}`} onClick={() => handleModeSwitch("simple")}>{t("app.simple")}</button>
+            <button className={`mode-btn${!isSimple ? " active" : ""}`} onClick={() => handleModeSwitch("advanced")}>{t("app.advanced")}</button>
           </div>
           {!isSimple && (
             <>
-              <StatusChip status={stacData.loading ? "loading" : stacData.error ? "error" : "ok"} label={stacData.loading ? "Fetching data…" : stacData.error ? "API error" : `${sentinelScenes.length} Sentinel + ${landsatScenes.length} Landsat`} />
-              <StatusChip status={weather.loading ? "loading" : weather.error ? "error" : "ok"} label={weather.loading ? "Weather…" : weather.error ? "MET error" : `${temp?.toFixed(1)}°C`} />
-              <StatusChip status={growingSeason.loading ? "loading" : growingSeason.error ? "error" : "ok"} label={growingSeason.loading ? "ERA5…" : growingSeason.error ? "ERA5 error" : `Growing season`} />
+              <StatusChip status={stacData.loading ? "loading" : stacData.error ? "error" : "ok"} label={stacData.loading ? t("status.fetchingData") : stacData.error ? t("status.apiError") : t("status.scenesLoaded", { sentinel: sentinelScenes.length, landsat: landsatScenes.length })} />
+              <StatusChip status={weather.loading ? "loading" : weather.error ? "error" : "ok"} label={weather.loading ? t("status.weather") : weather.error ? t("status.metError") : `${temp?.toFixed(1)}°C`} />
+              <StatusChip status={growingSeason.loading ? "loading" : growingSeason.error ? "error" : "ok"} label={growingSeason.loading ? t("status.era5") : growingSeason.error ? t("status.era5Error") : t("status.growingSeason")} />
             </>
           )}
         </div>
@@ -703,10 +756,10 @@ export default function NordmarkaForest() {
 
       {/* ── Tabs ── */}
       <nav className="tabs">
-        {tabs.map((t) => (
-          <button key={t.id} className={`tab ${tab === t.id ? "active" : ""}`} onClick={() => setTab(t.id)}>
-            <span className="tab-i">{t.icon}</span>
-            <span>{t.label}</span>
+        {tabs.map((tb) => (
+          <button key={tb.id} className={`tab ${tab === tb.id ? "active" : ""}`} onClick={() => setTab(tb.id)}>
+            <span className="tab-i">{tb.icon}</span>
+            <span>{tb.label}</span>
           </button>
         ))}
       </nav>
@@ -724,49 +777,143 @@ export default function NordmarkaForest() {
                   {ndviInterpret.level === 3 ? "✓" : ndviInterpret.level === 2 ? "~" : "!"}
                 </div>
                 <div className="hero-text">
-                  <h2 className="hero-title" style={{ color: ndviInterpret.color }}>{ndviInterpret.label}</h2>
-                  <p className="hero-desc">{ndviInterpret.description}</p>
+                  <h2 className="hero-title" style={{ color: ndviInterpret.color }}>{t(ndviInterpret.label)}</h2>
+                  <p className="hero-desc">{t(ndviInterpret.description)}</p>
                   <div className="hero-details">
-                    <span className="hero-detail">{laiInterpret.label} — {laiInterpret.description}</span>
+                    <span className="hero-detail">{t(laiInterpret.label)} — {t(laiInterpret.description)}</span>
                     <span className="hero-trend" style={{ color: laiTrend === "improving" ? "#2d6a4f" : laiTrend === "declining" ? "#e07a5f" : "#6b6560" }}>
-                      {trendArrow} Trend: {trendLabel}
+                      {trendArrow} {t("trend.label")}: {trendLabel}
                     </span>
                   </div>
                 </div>
-              </div>
-            </section>
-
-            {/* Carbon Story */}
-            <section className="card carbon-card">
-              <h2 className="card-title">Skogens karbonlager</h2>
-              <div className="carbon-big">{(totalBiomassMt * 0.47).toFixed(1)} Mt</div>
-              <div className="carbon-label">karbon lagret i Nordmarka</div>
-              <div className="carbon-equiv">{carbonStory}</div>
-              <div style={{ marginTop: 16, fontSize: 13, color: "var(--t2)", lineHeight: 1.6 }}>
-                Hvert år absorberer skogen rundt {(totalBiomassMt * 0.02 * 0.47 * 3.67).toFixed(0)} tusen tonn CO₂ gjennom vekst.
               </div>
             </section>
 
             {/* Quick Weather */}
             <section className="card">
-              <h2 className="card-title">Været nå</h2>
+              <h2 className="card-title">{t("simple.weather.now")}</h2>
               {currentWeather ? (
                 <div>
                   <div className="simple-weather-hero">
                     <span className="simple-temp">{temp?.toFixed(0)}°</span>
                     <span className="simple-weather-desc">
-                      {temp >= 15 ? "Varmt" : temp >= 5 ? "Mildt" : temp >= 0 ? "Kaldt" : "Frost"}
-                      {precipitation > 0 ? " med nedbør" : ""}
+                      {temp >= 15 ? t("simple.weather.warm") : temp >= 5 ? t("simple.weather.mild") : temp >= 0 ? t("simple.weather.cold") : t("simple.weather.frost")}
+                      {precipitation > 0 ? t("simple.weather.withPrecip") : ""}
                     </span>
                   </div>
                   <div className="simple-weather-details">
-                    <span>Vind: {windSpeed?.toFixed(0)} m/s</span>
-                    <span>Fuktighet: {humidity?.toFixed(0)}%</span>
+                    <span>{t("simple.weather.wind", { speed: windSpeed?.toFixed(0) })}</span>
+                    <span>{t("simple.weather.humidity", { humidity: humidity?.toFixed(0) })}</span>
                   </div>
                 </div>
               ) : (
-                <div className="empty">{weather.error ? "Kunne ikke hente vær" : "Henter værdata…"} <LoadingDot /></div>
+                <div className="empty">{weather.error ? t("simple.weather.fetchError") : t("simple.weather.fetching")} <LoadingDot /></div>
               )}
+            </section>
+
+            {/* Growing Season Status */}
+            <section className="card">
+              <h2 className="card-title">{t("simple.growing.title")}</h2>
+              <div className="simple-growing">
+                <div className="growing-status-dot" style={{ background: growingStatus.status === "active" || growingStatus.status === "warm" ? "#52b788" : "#90a4ae" }} />
+                <div>
+                  <div className="growing-headline">{growingStatus.status === "active" || growingStatus.status === "warm" ? t("simple.growing.active") : t("simple.growing.dormant")}</div>
+                  <div className="growing-sub">
+                    {growingStatus.status === "active" || growingStatus.status === "warm"
+                      ? t("growing.activeDesc")
+                      : t("growing.dormantDesc")}
+                  </div>
+                </div>
+              </div>
+              {avgSeasonLength && (
+                <div className="growing-stats">
+                  <div className="growing-stat">
+                    <span className="growing-stat-value">{avgSeasonLength}</span>
+                    <span className="growing-stat-label">{t("simple.growing.avgDays")}</span>
+                  </div>
+                  {lastSeasonYear && (
+                    <div className="growing-stat">
+                      <span className="growing-stat-value">{lastSeasonYear.length}</span>
+                      <span className="growing-stat-label">{t("simple.growing.daysIn", { year: lastSeasonYear.year })}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              {growingSeason.loading && <div className="empty">{t("simple.growing.loading")} <LoadingDot /></div>}
+            </section>
+
+            {/* Satellite Observations */}
+            <section className="card">
+              <h2 className="card-title">{t("simple.satellite.title")}</h2>
+              {latestLAI ? (
+                <div className="simple-conditions">
+                  <div className="condition-row">
+                    <span className="condition-label">{t("simple.satellite.lastCheck")}</span>
+                    <span className="condition-value">{new Date(latestLAI.date).toLocaleDateString(lang === "no" ? "no-NO" : "en-US", { day: "numeric", month: "long", year: "numeric" })}</span>
+                  </div>
+                  <div className="condition-row">
+                    <span className="condition-label">{t("simple.satellite.imagesAnalyzed")}</span>
+                    <span className="condition-value">{laiHistory.length}</span>
+                  </div>
+                  <div className="condition-row">
+                    <span className="condition-label">{t("simple.satellite.greenness")}</span>
+                    <span className="condition-value" style={{ color: ndviInterpret.color }}>{Math.round(latestLAI.ndvi * 100)}%</span>
+                  </div>
+                  <div className="condition-row" style={{ borderBottom: "none" }}>
+                    <span className="condition-label">{t("simple.satellite.canopy")}</span>
+                    <span className="condition-value">{t(laiInterpret.label)}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="empty">{stacData.loading ? t("simple.satellite.fetching") : t("simple.satellite.noData")} <LoadingDot /></div>
+              )}
+            </section>
+
+            {/* Risk Alerts (if any) */}
+            {weatherRisks.length > 0 && (
+              <section className="card wide">
+                <h2 className="card-title">{t("simple.alerts.title")}</h2>
+                <div className="risk-alerts">
+                  {weatherRisks.map((r, i) => (
+                    <div key={i} className="risk-alert" style={{ borderLeftColor: r.color }}>
+                      <div className="risk-label" style={{ color: r.color }}>{t(r.label)}</div>
+                      <div className="risk-desc">{t(r.description, r.descVars)}</div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Forest Facts */}
+            <section className="card">
+              <h2 className="card-title">{t("simple.forest.title")}</h2>
+              <div className="simple-conditions">
+                <div className="condition-row">
+                  <span className="condition-label">{t("simple.forest.area")}</span>
+                  <span className="condition-value">{NORDMARKA.area_km2} km²</span>
+                </div>
+                <div className="condition-row">
+                  <span className="condition-label">{t("simple.forest.elevation")}</span>
+                  <span className="condition-value">{NORDMARKA.elevation}</span>
+                </div>
+                <div className="condition-row" style={{ borderBottom: "none" }}>
+                  <span className="condition-label">{t("simple.forest.municipalities")}</span>
+                  <span className="condition-value" style={{ fontSize: 13 }}>{NORDMARKA.municipality}</span>
+                </div>
+              </div>
+            </section>
+
+            {/* Seasonal Tips */}
+            <section className="card">
+              <h2 className="card-title">{t("simple.tips.title")}</h2>
+              <div className="seasonal-tips">
+                {seasonalTips.map((tip, i) => (
+                  <div key={i} className="tip-item">
+                    <span className="tip-bullet">•</span>
+                    <span>{t(tip)}</span>
+                  </div>
+                ))}
+              </div>
             </section>
           </div>
         )}
@@ -775,32 +922,31 @@ export default function NordmarkaForest() {
         {isSimple && tab === "skogkart" && (
           <div className="grid">
             <section className="card wide">
-              <h2 className="card-title">Hvor skogen er tykest</h2>
-              <p className="card-desc">Kartet viser stående volum — altså hvor mye tømmer som finnes per dekar. Mørke farger betyr tett, gammel skog.</p>
+              <h2 className="card-title">{t("simple.map.volumeTitle")}</h2>
+              <p className="card-desc">{t("simple.map.volumeDesc")}</p>
               <div className="wms-preview large">
-                <img src={volumeUrl} alt="Stående volum Nordmarka" className="wms-img" onError={(e) => { e.target.style.display = "none"; }} />
+                <img src={volumeUrl} alt={t("simple.map.volumeTitle")} className="wms-img" onError={(e) => { e.target.style.display = "none"; }} />
               </div>
               <div className="simple-legend">
-                <span className="legend-item"><span className="legend-dot" style={{ background: "#1b4332" }} /> Tett skog</span>
-                <span className="legend-item"><span className="legend-dot" style={{ background: "#52b788" }} /> Middels</span>
-                <span className="legend-item"><span className="legend-dot" style={{ background: "#b7e4c7" }} /> Glissent</span>
-                <span className="legend-item"><span className="legend-dot" style={{ background: "#f4f1de" }} /> Åpent</span>
+                <span className="legend-item"><span className="legend-dot" style={{ background: "#1b4332" }} /> {t("simple.map.legend.dense")}</span>
+                <span className="legend-item"><span className="legend-dot" style={{ background: "#52b788" }} /> {t("simple.map.legend.medium")}</span>
+                <span className="legend-item"><span className="legend-dot" style={{ background: "#b7e4c7" }} /> {t("simple.map.legend.sparse")}</span>
+                <span className="legend-item"><span className="legend-dot" style={{ background: "#f4f1de" }} /> {t("simple.map.legend.open")}</span>
               </div>
             </section>
 
             <section className="card wide">
-              <h2 className="card-title">Hva som vokser hvor</h2>
-              <p className="card-desc">Kartet viser treslag — gran, furu og lauvtrær fordelt over Nordmarka.</p>
+              <h2 className="card-title">{t("simple.map.speciesTitle")}</h2>
+              <p className="card-desc">{t("simple.map.speciesDesc")}</p>
               <div className="wms-preview large">
-                <img src={speciesUrl} alt="Treslag Nordmarka" className="wms-img" onError={(e) => { e.target.style.display = "none"; }} />
+                <img src={speciesUrl} alt={t("simple.map.speciesTitle")} className="wms-img" onError={(e) => { e.target.style.display = "none"; }} />
               </div>
             </section>
 
             <section className="card">
-              <h2 className="card-title">Om kartene</h2>
+              <h2 className="card-title">{t("simple.map.aboutTitle")}</h2>
               <div style={{ fontSize: 14, color: "var(--t2)", lineHeight: 1.7 }}>
-                Kartene er laget av NIBIO (Norsk institutt for bioøkonomi) og dekker over 95% av Norges skogareal.
-                De kombinerer data fra landsskogtakseringen, laserscanning og satellittbilder.
+                {t("simple.map.aboutDesc")}
               </div>
             </section>
           </div>
@@ -814,33 +960,33 @@ export default function NordmarkaForest() {
               background: growingStatus.status === "active" ? "#d8f3dc" : growingStatus.status === "frost" ? "#e3f2fd" : "var(--card)",
               borderColor: growingStatus.status === "active" ? "#95d5b2" : growingStatus.status === "frost" ? "#90caf9" : "var(--border)",
             }}>
-              <h2 className="card-title" style={{ fontSize: 20 }}>{growingStatus.headline}</h2>
+              <h2 className="card-title" style={{ fontSize: 20 }}>{t(growingStatus.headline)}</h2>
               <p style={{ fontSize: 15, color: "var(--t2)", marginTop: 4 }}>
                 {growingStatus.status === "active" || growingStatus.status === "warm"
-                  ? "Trærne vokser aktivt. Vekstsesongen er i gang."
-                  : "Trærne er i dvale og venter på varmere dager."}
+                  ? t("growing.activeDesc")
+                  : t("growing.dormantDesc")}
               </p>
             </section>
 
             {/* Current weather plain */}
             {currentWeather && (
               <section className="card">
-                <h2 className="card-title">Værforhold</h2>
+                <h2 className="card-title">{t("simple.conditions.title")}</h2>
                 <div className="simple-conditions">
                   <div className="condition-row">
-                    <span className="condition-label">Temperatur</span>
+                    <span className="condition-label">{t("simple.conditions.temp")}</span>
                     <span className="condition-value">{temp?.toFixed(1)}°C</span>
                   </div>
                   <div className="condition-row">
-                    <span className="condition-label">Vind</span>
-                    <span className="condition-value">{windSpeed?.toFixed(0)} m/s {windSpeed > 10 ? "— frisk bris" : windSpeed > 5 ? "— lett bris" : "— stille"}</span>
+                    <span className="condition-label">{t("simple.conditions.wind")}</span>
+                    <span className="condition-value">{windSpeed?.toFixed(0)} m/s {windSpeed > 10 ? t("simple.conditions.windFresh") : windSpeed > 5 ? t("simple.conditions.windLight") : t("simple.conditions.windCalm")}</span>
                   </div>
                   <div className="condition-row">
-                    <span className="condition-label">Nedbør</span>
-                    <span className="condition-value">{precipitation != null && precipitation > 0 ? `${precipitation.toFixed(1)} mm/t` : "Ingen"}</span>
+                    <span className="condition-label">{t("simple.conditions.precip")}</span>
+                    <span className="condition-value">{precipitation != null && precipitation > 0 ? t("simple.conditions.precipAmt", { amount: precipitation.toFixed(1) }) : t("simple.conditions.precipNone")}</span>
                   </div>
                   <div className="condition-row">
-                    <span className="condition-label">Luftfuktighet</span>
+                    <span className="condition-label">{t("simple.conditions.humidity")}</span>
                     <span className="condition-value">{humidity?.toFixed(0)}%</span>
                   </div>
                 </div>
@@ -850,12 +996,12 @@ export default function NordmarkaForest() {
             {/* Risk alerts */}
             {weatherRisks.length > 0 && (
               <section className="card">
-                <h2 className="card-title">Varsler</h2>
+                <h2 className="card-title">{t("simple.alerts.title")}</h2>
                 <div className="risk-alerts">
                   {weatherRisks.map((r, i) => (
                     <div key={i} className="risk-alert" style={{ borderLeftColor: r.color }}>
-                      <div className="risk-label" style={{ color: r.color }}>{r.label}</div>
-                      <div className="risk-desc">{r.description}</div>
+                      <div className="risk-label" style={{ color: r.color }}>{t(r.label)}</div>
+                      <div className="risk-desc">{t(r.description, r.descVars)}</div>
                     </div>
                   ))}
                 </div>
@@ -864,12 +1010,12 @@ export default function NordmarkaForest() {
 
             {/* Seasonal advice */}
             <section className="card">
-              <h2 className="card-title">Tips for sesongen</h2>
+              <h2 className="card-title">{t("simple.tips.title")}</h2>
               <div className="seasonal-tips">
                 {seasonalTips.map((tip, i) => (
                   <div key={i} className="tip-item">
                     <span className="tip-bullet">•</span>
-                    <span>{tip}</span>
+                    <span>{t(tip)}</span>
                   </div>
                 ))}
               </div>
@@ -878,19 +1024,19 @@ export default function NordmarkaForest() {
             {/* Simple 48h outlook */}
             {weather.data && (
               <section className="card wide">
-                <h2 className="card-title">Neste 48 timer</h2>
+                <h2 className="card-title">{t("simple.forecast.title")}</h2>
                 <div className="simple-forecast">
                   {weather.data.properties.timeseries.slice(0, 24).filter((_, i) => i % 6 === 0).map((ts, i) => {
-                    const t = ts.data.instant.details.air_temperature;
+                    const tp = ts.data.instant.details.air_temperature;
                     const c = ts.data.instant.details.cloud_area_fraction;
                     const p = ts.data.next_1_hours?.details?.precipitation_amount ?? ts.data.next_6_hours?.details?.precipitation_amount ?? 0;
                     const time = new Date(ts.time);
                     const weatherIcon = p > 0.5 ? "🌧" : c > 70 ? "☁" : c > 30 ? "⛅" : "☀";
                     return (
                       <div key={i} className="simple-forecast-slot">
-                        <div className="forecast-slot-time">{time.toLocaleDateString("no-NO", { weekday: "short" })} {time.getHours()}:00</div>
+                        <div className="forecast-slot-time">{time.toLocaleDateString(lang === "no" ? "no-NO" : "en-US", { weekday: "short" })} {time.getHours()}:00</div>
                         <div className="forecast-slot-icon">{weatherIcon}</div>
-                        <div className="forecast-slot-temp" style={{ color: t > 0 ? "#e07a5f" : "#457b9d" }}>{t > 0 ? "+" : ""}{t.toFixed(0)}°</div>
+                        <div className="forecast-slot-temp" style={{ color: tp > 0 ? "#e07a5f" : "#457b9d" }}>{tp > 0 ? "+" : ""}{tp.toFixed(0)}°</div>
                         {p > 0 && <div className="forecast-slot-precip">{p.toFixed(1)} mm</div>}
                       </div>
                     );
@@ -905,23 +1051,23 @@ export default function NordmarkaForest() {
         {!isSimple && tab === "overview" && (
           <div className="grid">
             <section className="card wide">
-              <h2 className="card-title">Nordmarka — Key Metrics</h2>
-              <p className="card-desc">Real-time data from Sentinel-2, Landsat, NIBIO SR16 and MET Norway.</p>
+              <h2 className="card-title">{t("overview.title")}</h2>
+              <p className="card-desc">{t("overview.desc")}</p>
               <div className="stats-grid">
-                <StatBlock label="Area" value={NORDMARKA.area_km2} unit="km²" sub={NORDMARKA.elevation} />
-                <StatBlock label="Latest LAI" value={latestLAI ? latestLAI.lai.toFixed(2) : "—"} sub={latestLAI ? `NDVI: ${latestLAI.ndvi.toFixed(3)} · ${latestLAI.date}` : "Loading…"} accent="var(--green)" />
-                <StatBlock label="Avg LAI" value={avgLAI ? avgLAI.toFixed(2) : "—"} sub={`${laiHistory.length} observations`} accent="var(--green)" />
-                <StatBlock label="Biomass" value={latestLAI ? (latestLAI.lai * 28.5).toFixed(0) : "—"} unit="t/ha" sub={latestLAI ? `From LAI ${latestLAI.lai.toFixed(2)}` : "Loading…"} accent="var(--green)" />
-                <StatBlock label="Total Biomass" value={latestLAI ? (latestLAI.lai * 28.5 * NORDMARKA.area_km2 * 100 / 1000000).toFixed(2) : "—"} unit="Mt" sub={`For ${NORDMARKA.area_km2} km²`} accent="var(--green)" />
-                <StatBlock label="Temperature" value={temp != null ? temp.toFixed(1) : "—"} unit="°C" sub={weather.data ? "MET Norway — now" : "Loading…"} />
-                <StatBlock label="Sentinel-2" value={sentinelScenes.length} unit="scenes" sub="< 25% cloud cover" />
-                <StatBlock label="Landsat" value={landsatScenes.length} unit="scenes" sub="Landsat 8/9 C2L2" />
+                <StatBlock label={t("overview.area")} value={NORDMARKA.area_km2} unit="km²" sub={NORDMARKA.elevation} />
+                <StatBlock label={t("overview.latestLAI")} value={latestLAI ? latestLAI.lai.toFixed(2) : "—"} sub={latestLAI ? `NDVI: ${latestLAI.ndvi.toFixed(3)} · ${latestLAI.date}` : t("overview.loading")} accent="var(--green)" />
+                <StatBlock label={t("overview.avgLAI")} value={avgLAI ? avgLAI.toFixed(2) : "—"} sub={t("overview.observations", { count: laiHistory.length })} accent="var(--green)" />
+                <StatBlock label={t("overview.biomass")} value={latestLAI ? (latestLAI.lai * 28.5).toFixed(0) : "—"} unit="t/ha" sub={latestLAI ? t("overview.fromLAI", { lai: latestLAI.lai.toFixed(2) }) : t("overview.loading")} accent="var(--green)" />
+                <StatBlock label={t("overview.totalBiomass")} value={latestLAI ? (latestLAI.lai * 28.5 * NORDMARKA.area_km2 * 100 / 1000000).toFixed(2) : "—"} unit="Mt" sub={t("overview.forArea", { area: NORDMARKA.area_km2 })} accent="var(--green)" />
+                <StatBlock label={t("overview.temperature")} value={temp != null ? temp.toFixed(1) : "—"} unit="°C" sub={weather.data ? t("overview.metNow") : t("overview.loading")} />
+                <StatBlock label={t("overview.sentinel")} value={sentinelScenes.length} unit={t("overview.scenes")} sub={t("overview.cloudCover")} />
+                <StatBlock label={t("overview.landsat")} value={landsatScenes.length} unit={t("overview.scenes")} sub={t("overview.landsatSub")} />
               </div>
             </section>
 
             <section className="card">
-              <h2 className="card-title">LAI Time Series</h2>
-              <p className="card-desc">Leaf Area Index calculated from NDVI:<br/><code>LAI = 0.57 × e^(2.33 × NDVI)</code></p>
+              <h2 className="card-title">{t("laiChart.title")}</h2>
+              <p className="card-desc">{t("laiChart.desc")}<br/><code>LAI = 0.57 × e^(2.33 × NDVI)</code></p>
               {laiHistory.length > 0 ? (
                 <div className="bar-chart">
                   {laiHistory.map((h, i) => {
@@ -936,14 +1082,14 @@ export default function NordmarkaForest() {
                   })}
                 </div>
               ) : (
-                <div className="empty">Fetching satellite data… <LoadingDot /></div>
+                <div className="empty">{t("laiChart.fetching")} <LoadingDot /></div>
               )}
             </section>
 
             <section className="card">
-              <h2 className="card-title">10-Year Biomass Growth Projection</h2>
+              <h2 className="card-title">{t("biomassGrowth.title")}</h2>
               <p className="card-desc">
-                Accumulated growth over baseline. Norwegian forests grow ~2-4% biomass annually (3% projection).
+                {t("biomassGrowth.desc")}
               </p>
               {latestLAI ? (
                 <>
@@ -965,43 +1111,62 @@ export default function NordmarkaForest() {
                     })}
                   </div>
                   <div style={{ marginTop: 16, fontSize: 12, color: "var(--t2)", lineHeight: 1.6 }}>
-                    <strong>Baseline (current):</strong> {(latestLAI.lai * 28.5).toFixed(1)} t/ha<br/>
-                    <strong>Projected in 10 years:</strong> {(latestLAI.lai * 28.5 * Math.pow(1.03, 10)).toFixed(1)} t/ha 
+                    <strong>{t("biomassGrowth.baseline")}:</strong> {(latestLAI.lai * 28.5).toFixed(1)} t/ha<br/>
+                    <strong>{t("biomassGrowth.projected10y")}:</strong> {(latestLAI.lai * 28.5 * Math.pow(1.03, 10)).toFixed(1)} t/ha
                     (+{((latestLAI.lai * 28.5 * (Math.pow(1.03, 10) - 1))).toFixed(1)} t/ha, +{((Math.pow(1.03, 10) - 1) * 100).toFixed(1)}%)<br/>
-                    <strong>Total area growth:</strong> {((latestLAI.lai * 28.5 * Math.pow(1.03, 10) - latestLAI.lai * 28.5) * NORDMARKA.area_km2 * 100 / 1000000).toFixed(2)} Mt additional biomass
+                    <strong>{t("biomassGrowth.totalGrowth")}:</strong> {((latestLAI.lai * 28.5 * Math.pow(1.03, 10) - latestLAI.lai * 28.5) * NORDMARKA.area_km2 * 100 / 1000000).toFixed(2)} Mt {t("biomassGrowth.additionalBiomass")}
                   </div>
                 </>
               ) : (
-                <div className="empty">Waiting for LAI data…</div>
+                <div className="empty">{t("biomassGrowth.waiting")}</div>
               )}
             </section>
 
             <section className="card">
-              <h2 className="card-title">Current Weather</h2>
-              <p className="card-desc">From MET Norway Locationforecast API</p>
+              <h2 className="card-title">{t("weather.title")}</h2>
+              <p className="card-desc">{t("weather.desc")}</p>
               {currentWeather ? (
                 <div className="weather-grid">
                   <div className="weather-item">
                     <div className="weather-val">{temp?.toFixed(1)}°C</div>
-                    <div className="weather-label">Temperature</div>
+                    <div className="weather-label">{t("weather.temperature")}</div>
                   </div>
                   <div className="weather-item">
                     <div className="weather-val">{windSpeed?.toFixed(1)} m/s</div>
-                    <div className="weather-label">Wind</div>
+                    <div className="weather-label">{t("weather.wind")}</div>
                   </div>
                   <div className="weather-item">
                     <div className="weather-val">{humidity?.toFixed(0)}%</div>
-                    <div className="weather-label">Humidity</div>
+                    <div className="weather-label">{t("weather.humidity")}</div>
                   </div>
                   <div className="weather-item">
                     <div className="weather-val">{precipitation?.toFixed(1) ?? "—"} mm</div>
-                    <div className="weather-label">Precip. (1h)</div>
+                    <div className="weather-label">{t("weather.precip1h")}</div>
                   </div>
                 </div>
               ) : (
-                <div className="empty">{weather.error ? `Error: ${weather.error}` : "Loading…"} <LoadingDot /></div>
+                <div className="empty">{weather.error ? t("weather.error", { error: weather.error }) : t("overview.loading")} <LoadingDot /></div>
               )}
-              <div className="source-tag">Source: api.met.no · {new Date().toLocaleString("en-US")}</div>
+              <div className="source-tag">{t("weather.source")} · {new Date().toLocaleString(lang === "no" ? "no-NO" : "en-US")}</div>
+            </section>
+
+            {/* NIBIO SR16 preview */}
+            <section className="card wide">
+              <h2 className="card-title">{t("nibio.title")}</h2>
+              <p className="card-desc">{t("nibio.desc")}</p>
+              <div className="wms-preview">
+                <img
+                  src={volumeUrl}
+                  alt="SR16 Volum Nordmarka"
+                  className="wms-img"
+                  onError={(e) => { e.target.style.display = "none"; e.target.nextSibling.style.display = "block"; }}
+                />
+                <div className="wms-fallback" style={{ display: "none" }}>
+                  {t("nibio.wmsFailed")}
+                  <br />URL: {volumeUrl.slice(0, 80)}…
+                </div>
+              </div>
+              <div className="source-tag">Source: wms.nibio.no/cgi-bin/sr16 · Layer: SRRVOLUB · CRS: EPSG:4326</div>
             </section>
           </div>
         )}
@@ -1010,16 +1175,86 @@ export default function NordmarkaForest() {
         {!isSimple && tab === "lai" && (
           <div className="grid">
             <section className="card wide">
-              <h2 className="card-title">Leaf Area Index (LAI) — Nordmarka</h2>
+              <h2 className="card-title">{t("laiTab.title")}</h2>
               <p className="card-desc">
-                LAI calculated from Sentinel-2 NDVI values using the empirical forest formula:
+                {t("laiTab.desc")}
                 <code style={{ display: "block", margin: "8px 0", fontSize: 14, color: "var(--green)" }}>LAI = 0.57 × exp(2.33 × NDVI)</code>
-                Formula validated for boreal forests (R² ≈ 0.55, RMSE ≈ 0.8). Source: Gao et al. / Landsat-LAI (GitHub).
+                {t("laiTab.formulaNote")}
               </p>
             </section>
 
+            {laiHistory.length > 1 && (
+              <section className="card wide">
+                <h2 className="card-title">{t("laiTab.ndviOverTime")}</h2>
+                <div style={{ width: "100%", overflowX: "auto" }}>
+                  <svg viewBox={`0 0 ${Math.max(600, laiHistory.length * 50 + 100)} 260`} style={{ width: "100%", minWidth: 400, height: "auto", display: "block" }}>
+                    {(() => {
+                      const W = Math.max(600, laiHistory.length * 50 + 100);
+                      const H = 260;
+                      const pad = { top: 20, right: 60, bottom: 50, left: 50 };
+                      const cw = W - pad.left - pad.right;
+                      const ch = H - pad.top - pad.bottom;
+                      const data = laiHistory;
+                      const ndviMin = 0.4, ndviMax = 0.9;
+                      const laiMin = 1.5, laiMax = 4.5;
+                      const xScale = (i) => pad.left + (i / (data.length - 1)) * cw;
+                      const yNDVI = (v) => pad.top + ch - ((v - ndviMin) / (ndviMax - ndviMin)) * ch;
+                      const yLAI = (v) => pad.top + ch - ((v - laiMin) / (laiMax - laiMin)) * ch;
+                      const ndviPath = data.map((d, i) => `${i === 0 ? "M" : "L"}${xScale(i).toFixed(1)},${yNDVI(d.ndvi).toFixed(1)}`).join(" ");
+                      const laiPath = data.map((d, i) => `${i === 0 ? "M" : "L"}${xScale(i).toFixed(1)},${yLAI(d.lai).toFixed(1)}`).join(" ");
+                      const yTicks = 5;
+                      return (
+                        <g>
+                          {Array.from({ length: yTicks + 1 }, (_, i) => {
+                            const y = pad.top + (i / yTicks) * ch;
+                            return <line key={i} x1={pad.left} x2={W - pad.right} y1={y} y2={y} stroke="#e8e4df" strokeWidth={1} />;
+                          })}
+                          {Array.from({ length: yTicks + 1 }, (_, i) => {
+                            const val = ndviMax - (i / yTicks) * (ndviMax - ndviMin);
+                            const y = pad.top + (i / yTicks) * ch;
+                            return <text key={i} x={pad.left - 8} y={y + 4} textAnchor="end" fontSize={10} fill="#52b788" fontFamily="var(--fm)">{val.toFixed(1)}</text>;
+                          })}
+                          <text x={pad.left - 8} y={pad.top - 8} textAnchor="end" fontSize={10} fill="#52b788" fontWeight={600}>NDVI</text>
+                          {Array.from({ length: yTicks + 1 }, (_, i) => {
+                            const val = laiMax - (i / yTicks) * (laiMax - laiMin);
+                            const y = pad.top + (i / yTicks) * ch;
+                            return <text key={i} x={W - pad.right + 8} y={y + 4} textAnchor="start" fontSize={10} fill="#1b4332" fontFamily="var(--fm)">{val.toFixed(1)}</text>;
+                          })}
+                          <text x={W - pad.right + 8} y={pad.top - 8} textAnchor="start" fontSize={10} fill="#1b4332" fontWeight={600}>LAI</text>
+                          {data.map((d, i) => {
+                            const showLabel = data.length <= 15 || i % Math.ceil(data.length / 12) === 0 || i === data.length - 1;
+                            if (!showLabel) return null;
+                            return (
+                              <text key={i} x={xScale(i)} y={H - pad.bottom + 18} textAnchor="middle" fontSize={9} fill="var(--t2)" fontFamily="var(--fm)"
+                                transform={`rotate(-30, ${xScale(i)}, ${H - pad.bottom + 18})`}>
+                                {d.date.slice(5)}
+                              </text>
+                            );
+                          })}
+                          <path d={ndviPath} fill="none" stroke="#52b788" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+                          <path d={laiPath} fill="none" stroke="#1b4332" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="6,3" />
+                          {data.map((d, i) => (
+                            <g key={i}>
+                              <circle cx={xScale(i)} cy={yNDVI(d.ndvi)} r={3.5} fill="#52b788" stroke="#fff" strokeWidth={1.5} />
+                              <circle cx={xScale(i)} cy={yLAI(d.lai)} r={3.5} fill="#1b4332" stroke="#fff" strokeWidth={1.5} />
+                            </g>
+                          ))}
+                          <g transform={`translate(${pad.left}, ${H - 8})`}>
+                            <line x1={0} y1={0} x2={20} y2={0} stroke="#52b788" strokeWidth={2.5} />
+                            <text x={24} y={4} fontSize={11} fill="var(--t2)">NDVI</text>
+                            <line x1={65} y1={0} x2={85} y2={0} stroke="#1b4332" strokeWidth={2.5} strokeDasharray="6,3" />
+                            <text x={89} y={4} fontSize={11} fill="var(--t2)">LAI</text>
+                          </g>
+                        </g>
+                      );
+                    })()}
+                  </svg>
+                </div>
+              </section>
+            )}
+
             <section className="card wide">
-              <h2 className="card-title">LAI & NDVI per Scene</h2>
+              <h2 className="card-title">{t("laiTab.perScene")}</h2>
               {laiHistory.length > 0 ? (
                 <div className="scene-table">
                   <div className="scene-header">
@@ -1044,7 +1279,7 @@ export default function NordmarkaForest() {
             </section>
 
             <section className="card">
-              <h2 className="card-title">LAI Scale</h2>
+              <h2 className="card-title">{t("laiTab.scale")}</h2>
               <div className="lai-scale">
                 {[
                   { range: "0 – 1.0", desc: "Open / clear-cut", color: "#f4f1de" },
@@ -1066,7 +1301,7 @@ export default function NordmarkaForest() {
             </section>
 
             <section className="card">
-              <h2 className="card-title">Biomass Estimate</h2>
+              <h2 className="card-title">{t("laiTab.biomass")}</h2>
               <p className="card-desc">Biomass calculated from LAI via allometric relations for boreal forest.</p>
               {latestLAI ? (
                 <div className="stats-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
@@ -1086,7 +1321,7 @@ export default function NordmarkaForest() {
         {!isSimple && tab === "map" && (
           <div className="grid">
             <section className="card wide">
-              <h2 className="card-title">NIBIO SR16 Forest Resource Map — Nordmarka</h2>
+              <h2 className="card-title">{t("mapTab.title")}</h2>
               <p className="card-desc">
                 Real-time WMS map from NIBIO (Norwegian Institute of Bioeconomy). SR16 combines data from
                 the National Forest Inventory, laser scanning and Sentinel-2 satellite imagery. Resolution: 16×16 m.
@@ -1178,7 +1413,7 @@ export default function NordmarkaForest() {
             )}
 
             <section className="card">
-              <h2 className="card-title">About SR16 Data</h2>
+              <h2 className="card-title">{t("mapTab.about")}</h2>
               <div style={{ fontSize: 13, color: "var(--t2)", lineHeight: 1.7 }}>
                 <strong>Data source:</strong> NIBIO Forest Resource Map (SR16)
                 <br /><strong>Resolution:</strong> 16 × 16 meter raster
@@ -1191,7 +1426,7 @@ export default function NordmarkaForest() {
             </section>
 
             <section className="card">
-              <h2 className="card-title">Available WMS Layers</h2>
+              <h2 className="card-title">{t("mapTab.availableLayers")}</h2>
               <div style={{ fontSize: 12, fontFamily: "var(--fm)", color: "var(--t2)", lineHeight: 2 }}>
                 {["SRRVOLUB – Volume (m³/ha)", "SRRBMO – Biomass (tons/ha)", "SRRTRESLAG – Tree species", "SRRHOYDEM – Lorey's mean height", "SRRBONITET – Site index", "SRRKRONEDEK – Crown cover", "SRRGRFLATE – Basal area"].map((l) => (
                   <div key={l}>• {l}</div>
@@ -1205,7 +1440,7 @@ export default function NordmarkaForest() {
         {!isSimple && tab === "scenes" && (
           <div className="grid">
             <section className="card wide">
-              <h2 className="card-title">Sentinel-2 L2A Scenes — Nordmarka</h2>
+              <h2 className="card-title">{t("scenesTab.sentinelTitle")}</h2>
               <p className="card-desc">Scenes found via Element84 Earth Search STAC API. Bbox: [{NORDMARKA.bbox.join(", ")}]</p>
               {sentinelScenes.length > 0 ? (
                 <div className="scene-table">
@@ -1233,7 +1468,7 @@ export default function NordmarkaForest() {
             </section>
 
             <section className="card wide">
-              <h2 className="card-title">Landsat Collection 2 Level-2 Scenes</h2>
+              <h2 className="card-title">{t("scenesTab.landsatTitle")}</h2>
               <p className="card-desc">Landsat 8/9 scenes from USGS via Earth Search STAC.</p>
               {landsatScenes.length > 0 ? (
                 <div className="scene-table">
@@ -1262,7 +1497,7 @@ export default function NordmarkaForest() {
         {!isSimple && tab === "climate" && (
           <div className="grid">
             <section className="card wide">
-              <h2 className="card-title">Climate & Growing Season — Nordmarka</h2>
+              <h2 className="card-title">{t("climateTab.title")}</h2>
               <p className="card-desc">
                 Thermal growing season analysis using ERA5 reanalysis (2015–2025) and CMIP6 projections (~2050).
                 <br/>Definition: consecutive period with daily mean temperature ≥ 5°C (≥ 5 consecutive days to start/end).
@@ -1273,7 +1508,7 @@ export default function NordmarkaForest() {
             {weather.data && (
               <>
                 <section className="card">
-                  <h2 className="card-title">Current Conditions</h2>
+                  <h2 className="card-title">{t("climateTab.currentConditions")}</h2>
                   <div className="stats-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
                     <StatBlock label="Temperature" value={temp?.toFixed(1)} unit="°C" small />
                     <StatBlock label="Wind" value={windSpeed?.toFixed(1)} unit="m/s" small />
@@ -1298,7 +1533,7 @@ export default function NordmarkaForest() {
                 </section>
 
                 <section className="card">
-                  <h2 className="card-title">48-hour Forecast</h2>
+                  <h2 className="card-title">{t("climateTab.forecast48h")}</h2>
                   <div className="forecast-list">
                     {weather.data.properties.timeseries.slice(0, 16).filter((_, i) => i % 3 === 0).map((ts, i) => {
                       const t = ts.data.instant.details.air_temperature;
@@ -1382,7 +1617,7 @@ export default function NordmarkaForest() {
                   return (
                     <>
                       <section className="card wide">
-                        <h2 className="card-title">Growing Season Summary</h2>
+                        <h2 className="card-title">{t("climateTab.summary")}</h2>
                         <div className="stats-grid">
                           <StatBlock label="Historical Avg" value={histAvg} unit="days" sub={`${earliest.year}–${recent.year}`} accent="var(--green)" />
                           <StatBlock label="Most Recent" value={recent.length} unit="days" sub={`${recent.year}: ${recent.startDate.slice(5)} → ${recent.endDate.slice(5)}`} accent="var(--green)" />
@@ -1401,7 +1636,7 @@ export default function NordmarkaForest() {
 
                       {/* SVG Line Graph */}
                       <section className="card wide">
-                        <h2 className="card-title">Growing Season Length — Trend & Projections</h2>
+                        <h2 className="card-title">{t("climateTab.trendTitle")}</h2>
                         <p className="card-desc">
                           ERA5 reanalysis ({earliest.year}–{recent.year}, green) with linear trend, CMIP6 projections to 2050 (orange dashed).
                           {changeDays != null && ` The growing season is projected to be ${Math.abs(changeDays)} days ${changeDays > 0 ? "longer" : "shorter"} by mid-century.`}
@@ -1452,7 +1687,7 @@ export default function NordmarkaForest() {
 
                       {/* Detailed table */}
                       <section className="card wide">
-                        <h2 className="card-title">Growing Season Details</h2>
+                        <h2 className="card-title">{t("climateTab.details")}</h2>
                         <div className="scene-table">
                           <div className="gs-table-header">
                             <span>Year</span><span>Start</span><span>End</span><span>Length</span><span>GDD (5°C)</span><span>Mean Temp</span><span>Source</span>
@@ -1487,7 +1722,7 @@ export default function NordmarkaForest() {
 
                 {/* Methodology */}
                 <section className="card">
-                  <h2 className="card-title">Methodology</h2>
+                  <h2 className="card-title">{t("climateTab.methodology")}</h2>
                   <div style={{ fontSize: 13, color: "var(--t2)", lineHeight: 1.7 }}>
                     <strong>Definition:</strong> Thermal/Meteorological Growing Season
                     <br/><strong>Threshold:</strong> Daily mean temperature ≥ 5°C
@@ -1503,7 +1738,7 @@ export default function NordmarkaForest() {
                 </section>
 
                 <section className="card">
-                  <h2 className="card-title">Data Sources</h2>
+                  <h2 className="card-title">{t("climateTab.dataSources")}</h2>
                   <div style={{ fontSize: 12, fontFamily: "var(--fm)", color: "var(--t2)", lineHeight: 2 }}>
                     <div><strong>Historical:</strong> ECMWF ERA5 reanalysis via Open-Meteo</div>
                     <div><strong>Projections:</strong> CMIP6 HighResMIP (EC-Earth3P-HR, MPI-ESM1-2-XR, MRI-AGCM3-2-S)</div>
@@ -1528,7 +1763,7 @@ export default function NordmarkaForest() {
         {!isSimple && tab === "diversity" && (
           <div className="grid">
             <section className="card wide">
-              <h2 className="card-title">Spectral Diversity — Nordmarka</h2>
+              <h2 className="card-title">{t("diversityTab.title")}</h2>
               <p className="card-desc">
                 Forest biodiversity estimated from spectral heterogeneity of Sentinel-2 imagery.
                 Based on the spectral variation hypothesis: higher spectral heterogeneity indicates
@@ -1588,7 +1823,7 @@ export default function NordmarkaForest() {
               return (
                 <>
                   <section className="card wide">
-                    <h2 className="card-title">Key Diversity Metrics</h2>
+                    <h2 className="card-title">{t("diversityTab.keyMetrics")}</h2>
                     <p className="card-desc">Averaged across {scenes.length} analyzed Sentinel-2 scenes.</p>
                     <div className="stats-grid">
                       <StatBlock label="CV(NDVI)" value={avgCV.toFixed(3)} sub="Coefficient of variation" accent="var(--green)" />
@@ -1602,7 +1837,7 @@ export default function NordmarkaForest() {
 
                   {/* NDVI Histogram */}
                   <section className="card">
-                    <h2 className="card-title">NDVI Pixel Distribution</h2>
+                    <h2 className="card-title">{t("diversityTab.histogram")}</h2>
                     <p className="card-desc">Histogram from best scene ({bestScene.date}, {bestScene.pixelCount.toLocaleString()} pixels)</p>
                     <div className="ndvi-histogram">
                       {bestScene.bins.map((bin, i) => {
@@ -1627,7 +1862,7 @@ export default function NordmarkaForest() {
 
                   {/* CV(NDVI) Time Series */}
                   <section className="card">
-                    <h2 className="card-title">CV(NDVI) Across Scenes</h2>
+                    <h2 className="card-title">{t("diversityTab.cvTimeSeries")}</h2>
                     <p className="card-desc">Spectral heterogeneity over time. Higher CV = more diverse vegetation structure.</p>
                     <div className="bar-chart">
                       {scenes.sort((a, b) => a.date.localeCompare(b.date)).map((sc, i) => {
@@ -1645,7 +1880,7 @@ export default function NordmarkaForest() {
 
                   {/* Per-scene table */}
                   <section className="card wide">
-                    <h2 className="card-title">Per-Scene Analysis</h2>
+                    <h2 className="card-title">{t("diversityTab.perScene")}</h2>
                     <div className="scene-table">
                       <div className="div-table-header">
                         <span>Date</span><span>Scene ID</span><span>Cloud%</span><span>CV(NDVI)</span><span>Rao's Q</span><span>Shannon</span><span>Pixels</span>
@@ -1667,7 +1902,7 @@ export default function NordmarkaForest() {
 
                   {/* Interpretation guide */}
                   <section className="card">
-                    <h2 className="card-title">Interpretation Guide</h2>
+                    <h2 className="card-title">{t("diversityTab.interpretation")}</h2>
                     <div className="lai-scale">
                       {[
                         { range: "CV < 0.10", desc: "Very uniform — monoculture / single species", color: "#b7e4c7" },
@@ -1690,7 +1925,7 @@ export default function NordmarkaForest() {
                   </section>
 
                   <section className="card">
-                    <h2 className="card-title">Data & Method</h2>
+                    <h2 className="card-title">{t("diversityTab.dataMethod")}</h2>
                     <div style={{ fontSize: 12, fontFamily: "var(--fm)", color: "var(--t2)", lineHeight: 2 }}>
                       <div><strong>Sensor:</strong> Sentinel-2 L2A (10m resolution, bands B04 + B08)</div>
                       <div><strong>Format:</strong> Cloud-Optimized GeoTIFF (COG) overviews</div>
@@ -1708,6 +1943,217 @@ export default function NordmarkaForest() {
             {!diversityData.initialized && !stacData.loading && sentinelScenes.length === 0 && (
               <section className="card wide">
                 <div className="empty">No Sentinel-2 scenes available for diversity analysis. Wait for satellite data to load.</div>
+              </section>
+            )}
+          </div>
+        )}
+
+        {/* ════════ SIMPLE: ARTER ════════ */}
+        {isSimple && tab === "arter" && (
+          <div className="grid">
+            <section className="card wide">
+              <h2 className="card-title">Arter i Nordmarka</h2>
+              <p className="card-desc">
+                Observasjoner fra iNaturalist — forskningsverifiserte funn innenfor Nordmarkas grenser.
+                Her ser du truede arter og fremmede arter som er registrert i området.
+              </p>
+            </section>
+
+            {speciesData.loading && (
+              <section className="card wide">
+                <div className="empty">Henter artsdata fra iNaturalist… <LoadingDot /></div>
+              </section>
+            )}
+
+            {speciesData.error && (
+              <section className="card wide">
+                <div className="empty">Kunne ikke hente artsdata: {speciesData.error}</div>
+              </section>
+            )}
+
+            {speciesData.threatened.length > 0 && (
+              <section className="card wide">
+                <h2 className="card-title">Truede arter</h2>
+                <p className="card-desc">Arter som er klassifisert som truet eller nær truet i området.</p>
+                <div className="species-grid">
+                  {speciesData.threatened.map(sp => (
+                    <div key={sp.taxonId} className="species-card">
+                      <div className="species-photo">
+                        {sp.photoUrl ? (
+                          <img src={sp.photoUrl} alt={sp.commonName || sp.scientificName} />
+                        ) : (
+                          <div className="species-photo-placeholder">📷</div>
+                        )}
+                      </div>
+                      <div className="species-info">
+                        <div className="species-common">{sp.commonName || sp.scientificName}</div>
+                        <div className="species-scientific">{sp.scientificName}</div>
+                        <div className="species-meta">
+                          <span className="species-obs-badge">{sp.obsCount} obs.</span>
+                          {sp.conservationStatus && (
+                            <span className={`species-status-badge status-${(sp.conservationStatus.status || "").toLowerCase()}`}>
+                              {sp.conservationStatus.status_name || sp.conservationStatus.status}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {speciesData.introduced.length > 0 && (
+              <section className="card wide">
+                <h2 className="card-title">Fremmede arter</h2>
+                <p className="card-desc">Introduserte arter som er observert i Nordmarka.</p>
+                <div className="species-grid">
+                  {speciesData.introduced.map(sp => (
+                    <div key={sp.taxonId} className="species-card">
+                      <div className="species-photo">
+                        {sp.photoUrl ? (
+                          <img src={sp.photoUrl} alt={sp.commonName || sp.scientificName} />
+                        ) : (
+                          <div className="species-photo-placeholder">📷</div>
+                        )}
+                      </div>
+                      <div className="species-info">
+                        <div className="species-common">{sp.commonName || sp.scientificName}</div>
+                        <div className="species-scientific">{sp.scientificName}</div>
+                        <div className="species-meta">
+                          <span className="species-obs-badge">{sp.obsCount} obs.</span>
+                          {sp.iconicTaxon && <span className="species-taxon-tag">{sp.iconicTaxon}</span>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {speciesData.initialized && !speciesData.loading && speciesData.threatened.length === 0 && speciesData.introduced.length === 0 && !speciesData.error && (
+              <section className="card wide">
+                <div className="empty">Ingen arter funnet i dette området.</div>
+              </section>
+            )}
+          </div>
+        )}
+
+        {/* ════════ SPECIES (ADVANCED) ════════ */}
+        {!isSimple && tab === "species" && (
+          <div className="grid">
+            <section className="card wide">
+              <h2 className="card-title">Species — Nordmarka</h2>
+              <p className="card-desc">
+                Research-grade species observations from iNaturalist within {Math.round(Math.sqrt(NORDMARKA.area_km2 / Math.PI))} km
+                of Nordmarka center ({NORDMARKA.center[0]}°N, {NORDMARKA.center[1]}°E).
+                Showing threatened and introduced species.
+              </p>
+            </section>
+
+            {speciesData.loading && (
+              <section className="card wide">
+                <div className="empty">Fetching species data from iNaturalist… <LoadingDot /></div>
+              </section>
+            )}
+
+            {speciesData.error && (
+              <section className="card wide">
+                <div className="empty">Error: {speciesData.error}</div>
+              </section>
+            )}
+
+            {(speciesData.threatened.length > 0 || speciesData.introduced.length > 0) && (
+              <section className="card wide">
+                <h2 className="card-title">Summary</h2>
+                <div className="stats-grid">
+                  <StatBlock label="Threatened Species" value={speciesData.threatened.length} sub="Near threatened to critically endangered" accent="#c0392b" />
+                  <StatBlock label="Introduced Species" value={speciesData.introduced.length} sub="Non-native species observed" accent="#e07a5f" />
+                  {speciesData.threatened.length > 0 && (
+                    <StatBlock
+                      label="Most Observed (Threatened)"
+                      value={speciesData.threatened[0].obsCount}
+                      unit="obs"
+                      sub={speciesData.threatened[0].commonName || speciesData.threatened[0].scientificName}
+                      accent="var(--green)"
+                    />
+                  )}
+                  {speciesData.introduced.length > 0 && (
+                    <StatBlock
+                      label="Most Observed (Introduced)"
+                      value={speciesData.introduced[0].obsCount}
+                      unit="obs"
+                      sub={speciesData.introduced[0].commonName || speciesData.introduced[0].scientificName}
+                      accent="var(--green)"
+                    />
+                  )}
+                </div>
+              </section>
+            )}
+
+            {speciesData.threatened.length > 0 && (
+              <section className="card wide">
+                <h2 className="card-title">Threatened Species</h2>
+                <div className="species-grid">
+                  {speciesData.threatened.map(sp => (
+                    <div key={sp.taxonId} className="species-card">
+                      <div className="species-photo">
+                        {sp.photoUrl ? (
+                          <img src={sp.photoUrl} alt={sp.commonName || sp.scientificName} />
+                        ) : (
+                          <div className="species-photo-placeholder">📷</div>
+                        )}
+                      </div>
+                      <div className="species-info">
+                        <div className="species-common">{sp.commonName || sp.scientificName}</div>
+                        <div className="species-scientific">{sp.scientificName}</div>
+                        <div className="species-meta">
+                          <span className="species-obs-badge">{sp.obsCount} obs</span>
+                          {sp.iconicTaxon && <span className="species-taxon-tag">{sp.iconicTaxon}</span>}
+                          {sp.conservationStatus && (
+                            <span className={`species-status-badge status-${(sp.conservationStatus.status || "").toLowerCase()}`}>
+                              {sp.conservationStatus.status_name || sp.conservationStatus.status}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {speciesData.introduced.length > 0 && (
+              <section className="card wide">
+                <h2 className="card-title">Introduced Species</h2>
+                <div className="species-grid">
+                  {speciesData.introduced.map(sp => (
+                    <div key={sp.taxonId} className="species-card">
+                      <div className="species-photo">
+                        {sp.photoUrl ? (
+                          <img src={sp.photoUrl} alt={sp.commonName || sp.scientificName} />
+                        ) : (
+                          <div className="species-photo-placeholder">📷</div>
+                        )}
+                      </div>
+                      <div className="species-info">
+                        <div className="species-common">{sp.commonName || sp.scientificName}</div>
+                        <div className="species-scientific">{sp.scientificName}</div>
+                        <div className="species-meta">
+                          <span className="species-obs-badge">{sp.obsCount} obs</span>
+                          {sp.iconicTaxon && <span className="species-taxon-tag">{sp.iconicTaxon}</span>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="source-tag">Source: iNaturalist API · Research-grade observations · Radius: {Math.round(Math.sqrt(NORDMARKA.area_km2 / Math.PI))} km from center</div>
+              </section>
+            )}
+
+            {speciesData.initialized && !speciesData.loading && speciesData.threatened.length === 0 && speciesData.introduced.length === 0 && !speciesData.error && (
+              <section className="card wide">
+                <div className="empty">No species data found for this area.</div>
               </section>
             )}
           </div>
@@ -1925,6 +2371,21 @@ const styles = `
     white-space: nowrap;
   }
 
+  /* ═══ Language Toggle ═══ */
+  .lang-toggle {
+    display: inline-flex; border-radius: 20px; overflow: hidden;
+    border: 1px solid var(--border); background: var(--bg);
+  }
+  .lang-btn {
+    background: none; border: none; padding: 5px 10px;
+    font-family: var(--fm); font-size: 11px; font-weight: 600;
+    color: var(--t2); cursor: pointer; transition: all 0.2s;
+    letter-spacing: 0.05em;
+  }
+  .lang-btn.active {
+    background: var(--green-d); color: white;
+  }
+
   /* ═══ Mode Toggle ═══ */
   .mode-toggle {
     display: inline-flex; border-radius: 20px; overflow: hidden;
@@ -1958,15 +2419,20 @@ const styles = `
   .hero-detail { font-size: 14px; color: var(--t2); }
   .hero-trend { font-size: 15px; font-weight: 600; }
 
-  .carbon-card { text-align: center; }
-  .carbon-big { font-family: var(--fd); font-size: 48px; color: var(--green); line-height: 1; margin: 12px 0 4px; }
-  .carbon-label { font-size: 14px; color: var(--t2); margin-bottom: 12px; }
-  .carbon-equiv { font-size: 15px; color: var(--green-d); font-weight: 500; padding: 12px; background: #d8f3dc; border-radius: 8px; }
 
   .simple-weather-hero { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
   .simple-temp { font-family: var(--fd); font-size: 48px; line-height: 1; }
   .simple-weather-desc { font-size: 16px; color: var(--t2); }
   .simple-weather-details { display: flex; gap: 20px; font-size: 14px; color: var(--t2); }
+
+  .simple-growing { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 16px; }
+  .growing-status-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; }
+  .growing-headline { font-weight: 600; font-size: 16px; margin-bottom: 4px; }
+  .growing-sub { font-size: 14px; color: var(--t2); }
+  .growing-stats { display: flex; gap: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
+  .growing-stat { display: flex; flex-direction: column; }
+  .growing-stat-value { font-family: var(--fd); font-size: 28px; color: var(--green); line-height: 1; }
+  .growing-stat-label { font-size: 13px; color: var(--t2); margin-top: 4px; }
 
   .simple-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
   .legend-item { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--t2); }
@@ -1996,6 +2462,56 @@ const styles = `
   .forecast-slot-temp { font-size: 20px; font-weight: 700; font-family: var(--fd); }
   .forecast-slot-precip { font-size: 11px; color: #457b9d; font-family: var(--fm); margin-top: 2px; }
 
+  /* ═══ Species Cards ═══ */
+  .species-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 14px;
+  }
+  .species-card {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .species-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+  .species-photo {
+    width: 100%; aspect-ratio: 1; overflow: hidden; background: var(--bg2);
+  }
+  .species-photo img {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+  }
+  .species-photo-placeholder {
+    width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+    font-size: 32px; color: var(--t2); background: var(--bg2);
+  }
+  .species-info { padding: 12px; }
+  .species-common {
+    font-weight: 600; font-size: 14px; margin-bottom: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .species-scientific {
+    font-style: italic; font-size: 12px; color: var(--t2); margin-bottom: 8px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .species-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+  .species-obs-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    background: #d8f3dc; color: var(--green-d); font-family: var(--fm);
+    font-size: 10px; font-weight: 600;
+  }
+  .species-taxon-tag {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    background: var(--bg2); color: var(--t2); font-family: var(--fm);
+    font-size: 10px;
+  }
+  .species-status-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-family: var(--fm); font-size: 10px; font-weight: 600;
+  }
+  .species-status-badge.status-lc { background: #d8f3dc; color: #1b4332; }
+  .species-status-badge.status-nt { background: #fff3cd; color: #856404; }
+  .species-status-badge.status-vu { background: #ffe0b2; color: #e65100; }
+  .species-status-badge.status-en { background: #ffcdd2; color: #b71c1c; }
+  .species-status-badge.status-cr { background: #f8d7da; color: #721c24; }
+
   @media (max-width: 700px) {
     .grid { grid-template-columns: 1fr; }
     .scene-header, .scene-row { grid-template-columns: 80px 1fr 60px 60px; }
@@ -2015,5 +2531,6 @@ const styles = `
     .simple-forecast { flex-wrap: wrap; }
     .simple-forecast-slot { min-width: 80px; }
     .mode-toggle { margin-bottom: 4px; }
+    .species-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
   }
 `;
