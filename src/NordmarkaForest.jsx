@@ -1173,39 +1173,6 @@ export default function NordmarkaForest() {
                 <div className="wms-preview large">
                   <img src={biomassUrl} alt="SR16 Biomass" className="wms-img" onError={(e) => { e.target.style.display = "none"; }} />
                 </div>
-                <div className="map-legend">
-                  <div className="legend-title">Legend (tons/ha)</div>
-                  <div className="legend-items">
-                    <div className="legend-item">
-                      <span className="legend-color" style={{ background: "#f7fcf5" }} />
-                      <span className="legend-label">0 – 50</span>
-                    </div>
-                    <div className="legend-item">
-                      <span className="legend-color" style={{ background: "#ccebc5" }} />
-                      <span className="legend-label">50 – 100</span>
-                    </div>
-                    <div className="legend-item">
-                      <span className="legend-color" style={{ background: "#a8ddb5" }} />
-                      <span className="legend-label">100 – 150</span>
-                    </div>
-                    <div className="legend-item">
-                      <span className="legend-color" style={{ background: "#7bccc4" }} />
-                      <span className="legend-label">150 – 200</span>
-                    </div>
-                    <div className="legend-item">
-                      <span className="legend-color" style={{ background: "#4eb3d3" }} />
-                      <span className="legend-label">200 – 250</span>
-                    </div>
-                    <div className="legend-item">
-                      <span className="legend-color" style={{ background: "#2b8cbe" }} />
-                      <span className="legend-label">250 – 300</span>
-                    </div>
-                    <div className="legend-item">
-                      <span className="legend-color" style={{ background: "#0868ac" }} />
-                      <span className="legend-label">&gt; 300</span>
-                    </div>
-                  </div>
-                </div>
                 <div className="source-tag">WMS Layer: SRRBMO</div>
               </section>
             )}
