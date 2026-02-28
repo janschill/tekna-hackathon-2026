@@ -1003,25 +1003,6 @@ export default function NordmarkaForest() {
               )}
               <div className="source-tag">Source: api.met.no · {new Date().toLocaleString("en-US")}</div>
             </section>
-
-            {/* NIBIO SR16 preview */}
-            <section className="card wide">
-              <h2 className="card-title">NIBIO SR16 — Forest Resource Map</h2>
-              <p className="card-desc">Standing volume (m³/ha) for Nordmarka area. Data: NIBIO via WMS.</p>
-              <div className="wms-preview">
-                <img
-                  src={volumeUrl}
-                  alt="SR16 Volum Nordmarka"
-                  className="wms-img"
-                  onError={(e) => { e.target.style.display = "none"; e.target.nextSibling.style.display = "block"; }}
-                />
-                <div className="wms-fallback" style={{ display: "none" }}>
-                  WMS failed — NIBIO service may be temporarily unavailable.
-                  <br />URL: {volumeUrl.slice(0, 80)}…
-                </div>
-              </div>
-              <div className="source-tag">Source: wms.nibio.no/cgi-bin/sr16 · Layer: SRRVOLUB · CRS: EPSG:4326</div>
-            </section>
           </div>
         )}
 
